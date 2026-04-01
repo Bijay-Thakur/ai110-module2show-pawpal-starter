@@ -31,6 +31,22 @@ The app now includes smarter scheduling features:
 - Automatically creates the next occurrence when a daily or weekly task is completed
 - Detects time conflicts and shows lightweight warnings instead of failing silently
 
+## Testing PawPal+
+
+Run the automated test suite with:
+
+```bash
+python -m pytest
+```
+
+These tests verify that:
+
+- tasks are sorted correctly by preferred time
+- completing a daily task creates the next occurrence for the following day
+- scheduling conflicts at the same time are detected and reported
+
+**Confidence Level:** ⭐⭐⭐⭐☆
+
 ## Getting started
 
 ### Setup
