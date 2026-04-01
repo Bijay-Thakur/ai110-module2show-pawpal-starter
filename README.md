@@ -22,6 +22,15 @@ Your final app should:
 - Display the plan clearly (and ideally explain the reasoning)
 - Include tests for the most important scheduling behaviors
 
+## Smarter Scheduling
+
+The app now includes smarter scheduling features:
+
+- Sorts tasks by preferred time and priority so the day feels organized
+- Filters tasks by pet name and completed status for easier task review
+- Automatically creates the next occurrence when a daily or weekly task is completed
+- Detects time conflicts and shows lightweight warnings instead of failing silently
+
 ## Getting started
 
 ### Setup
