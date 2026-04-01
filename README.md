@@ -31,6 +31,10 @@ The app now includes smarter scheduling features:
 - Automatically creates the next occurrence when a daily or weekly task is completed
 - Detects time conflicts and shows lightweight warnings instead of failing silently
 
+## 📸 Demo
+
+<a href="/course_images/ai110/pawpal_app_screenshot.png" target="_blank"><img src='/course_images/ai110/pawpal_app_screenshot.png' title='PawPal App' width='' alt='PawPal App' class='center-block' /></a>
+
 ## Testing PawPal+
 
 Run the automated test suite with:

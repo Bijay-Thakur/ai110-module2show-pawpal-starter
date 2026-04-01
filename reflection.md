@@ -14,7 +14,8 @@ classDiagram
         +List~str~ available_hours
         +add_pet(pet) None
         +remove_pet(pet) None
-        +get_schedule() List
+        +get_pets() List
+        +get_all_tasks(include_completed: bool) List
     }
 
     class Pet {
@@ -24,34 +25,39 @@ classDiagram
         +String breed
         +List~str~ special_needs
         +add_task(task) None
-        +get_tasks() List
+        +get_tasks(include_completed: bool) List
     }
 
     class Task {
         +String title
+        +String description
         +int duration_minutes
         +String priority
+        +String frequency
         +String preferred_time
+        +Date due_date
         +bool is_completed
         +mark_complete() None
         +get_priority_score() int
+        +clone_for_next_occurrence() Task
     }
 
     class Scheduler {
         +Owner owner
-        +Pet pet
-        +List~Task~ tasks
-        +List schedule
-        +add_task(task) None
-        +prioritize_tasks() List
+        +List~Task~ schedule
+        +add_task(task, pet) None
+        +sort_by_time(tasks) List
+        +filter_tasks(pet_name, include_completed) List
+        +prioritize_tasks(pet) List
         +generate_schedule() List
+        +detect_conflicts(schedule) List
         +explain_plan() str
+        +mark_task_complete(task) None
     }
 
     Owner "1" --> "1..*" Pet : owns
-    Pet "1" --> "0..*" Task : needs
+    Pet "1" --> "0..*" Task : has
     Scheduler "1" --> "1" Owner : serves
-    Scheduler "1" --> "1" Pet : plans for
     Scheduler "1" --> "0..*" Task : manages
 ```
 
@@ -59,29 +65,23 @@ classDiagram
 
 I chose four classes, each with a focused, single responsibility:
 
-- **`Task`** — Represents one atomic unit of pet care (e.g., "morning walk", "feed breakfast", "give medication"). It stores how long the activity takes (`duration_minutes`), how urgent it is (`priority`: low/medium/high), and an optional preferred start time. It exposes `mark_complete()` to track completion and `get_priority_score()` to return a numeric value used for sorting, so the rest of the system never has to know the string-to-number mapping directly.
+- **`Task`** — Represents one atomic unit of pet care. It stores identity, duration, priority, frequency, preferred time, optional due date, and completion status. It exposes `mark_complete()` to update state and `clone_for_next_occurrence()` to create the next daily or weekly instance automatically.
 
-- **`Pet`** — Models the animal being cared for. It holds identity data (name, species, age, breed) plus a `special_needs` list that captures medical or behavioral requirements (e.g., "insulin injection", "no grain food"). It also owns a private `_tasks` list and exposes `add_task()` / `get_tasks()` so tasks are always accessed through the pet they belong to, keeping data encapsulated.
+- **`Pet`** — Models a single animal. It holds identity data and a private list of assigned tasks, and it exposes `add_task()` and `get_tasks()` so external code works through the pet object instead of manipulating internal lists directly.
 
-- **`Owner`** — Represents the person managing care. Its most important field is `available_hours` — the list of time slots the owner is actually free — which the `Scheduler` uses as the only valid slots for placing tasks. It also maintains the list of pets via `add_pet()` / `remove_pet()` / `get_pets()`, making it easy to extend the system to multiple pets later.
+- **`Owner`** — Represents the person responsible for the pets. It stores available hours and maintains the pet roster. `get_all_tasks()` provides a flat task list across every owned pet so the scheduler can build a single plan.
 
-- **`Scheduler`** — The coordination class. It takes a specific `Owner` and `Pet` at construction and serves as the single place where scheduling logic lives. `prioritize_tasks()` sorts the task pool by priority score and preferred time; `generate_schedule()` maps sorted tasks onto the owner's available hour slots and produces a list of `{time, task, reason}` dicts; and `explain_plan()` turns that list into a human-readable summary. By keeping all scheduling decisions here, the other three classes stay simple data holders.
+- **`Scheduler`** — Coordinates the schedule. It manages task registration, sorts tasks by time, filters tasks by pet or completion status, generates a schedule from available hours, detects same-time conflicts, and handles recurring task creation when tasks are completed.
 
 **b. Design changes**
 
-Yes, three changes were made after reviewing the skeleton against the intended design:
+I made several updates after reviewing the implementation against the original plan:
 
-**1. `Scheduler.add_task()` now syncs `Pet._tasks`**
-
-In the original skeleton, `Pet._tasks` and `Scheduler.tasks` were two independent lists with no connection. You could add a task to the scheduler and the pet would never know about it, or vice versa. I fixed `Scheduler.add_task()` so it appends to both lists (via `pet.add_task()`), making `Pet._tasks` the single source of truth and eliminating the risk of the two lists drifting out of sync.
-
-**2. `prioritize_tasks()` uses `"23:59"` as a fallback for `None` preferred times**
-
-The original sort key was `(priority_score, preferred_time)`. Because `preferred_time` is `Optional[str]`, any task without a preferred time would produce a `None` in the tuple, causing a `TypeError` in Python 3 when two such tasks were compared against each other. I changed the key to `t.preferred_time or "23:59"` so tasks without a preference sort to the end of the day rather than crashing.
-
-**3. `generate_schedule()` flags overflow tasks as `UNSCHEDULED` instead of silently dropping them**
-
-The original design had no mechanism for the case where total task time exceeds available slots. Rather than dropping extra tasks silently (a debugging nightmare), I added an explicit overflow path: tasks that cannot be placed are added to the schedule with `time = "UNSCHEDULED"` and a descriptive reason string. `explain_plan()` then surfaces a warning count so the owner immediately knows they need to free up more time.
+1. `Scheduler.add_task()` now keeps `Pet._tasks` and the scheduler task map in sync.
+2. `Scheduler.sort_by_time()` was added to present tasks in chronological order in the UI.
+3. `Scheduler.filter_tasks()` was added to support pet-based and completed-status filtering.
+4. `Task.clone_for_next_occurrence()` and `Scheduler.mark_task_complete()` were added so daily and weekly tasks automatically reappear on the next due date.
+5. `Scheduler.detect_conflicts()` now finds duplicate scheduled times and reports lightweight warnings instead of failing silently.
 
 ---
 
@@ -89,14 +89,18 @@ The original design had no mechanism for the case where total task time exceeds 
 
 **a. Constraints and priorities**
 
-- What constraints does your scheduler consider (for example: time, priority, preferences)?
-- How did you decide which constraints mattered most?
+My scheduler considers these constraints:
+
+- Owner available hours: tasks must fit into the owner's free slots.
+- Task priority: higher-priority tasks should be scheduled earlier.
+- Preferred time: tasks with preferred times are placed at those times when possible.
+- Recurrence frequency: daily and weekly tasks must reappear after completion.
+
+I prioritized these constraints by focusing first on owner availability and urgency, then on making the schedule readable for the owner with preferred times. Recurrence was added so the system supports repeating care tasks without manual recreation.
 
 **b. Tradeoffs**
 
-- Describe one tradeoff your scheduler makes.
-- Why is that tradeoff reasonable for this scenario?
-- My scheduler currently detects conflicts only when two tasks share the same scheduled time exactly, rather than trying to model overlapping durations. That keeps the logic lightweight and easier to explain for this phase, even though it means we may miss a clash if one 30-minute task starts during another task's time window.
+One tradeoff is that conflict detection only checks for exact same-time overlaps, not multi-minute duration overlaps. This is reasonable for this phase because it keeps the system simple and still catches the most obvious scheduling problems. A more advanced version would need interval arithmetic and duration-based overlap checks.
 
 ---
 
@@ -104,14 +108,18 @@ The original design had no mechanism for the case where total task time exceeds 
 
 **a. How you used AI**
 
-- How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
-- What kinds of prompts or questions were most helpful?
-- I asked AI to investigate `st.session_state` so I could persist the `Owner` instance across Streamlit reruns. That helped me wire the UI buttons to actual class methods on `Owner`, `Pet`, and `Task` instead of leaving the app in a UI-only prototype state.
+I used AI as a development partner in several ways:
+
+- To research `st.session_state` and make the Streamlit app stateful.
+- To get guidance on sorting with Python `sorted(..., key=lambda ...)` for time-based task ordering.
+- To shape conflict detection into a lightweight warning mechanism rather than a hard failure.
+- To draft tests and verify the behavior of recurring tasks and schedule generation.
+
+The most helpful prompts were specific implementation questions like "How can I sort tasks by HH:MM time string?" and "How can I detect duplicate task times without crashing?".
 
 **b. Judgment and verification**
 
-- Describe one moment where you did not accept an AI suggestion as-is.
-- How did you evaluate or verify what the AI suggested?
+I did not accept every AI suggestion as-is. For example, AI initially recommended scheduling tasks purely by priority, but I modified that to preserve preferred times and availability. I verified the final approach by writing and running unit tests, and by checking the Streamlit UI logic against the actual `Scheduler` methods.
 
 ---
 
@@ -119,13 +127,20 @@ The original design had no mechanism for the case where total task time exceeds 
 
 **a. What you tested**
 
-- What behaviors did you test?
-- Why were these tests important?
+I tested the most important scheduler behaviors:
+
+- Task completion state changes cleanly with `mark_complete()`.
+- Tasks are sorted correctly by preferred time using `Scheduler.sort_by_time()`.
+- Marking a daily task complete creates a new task due the next day.
+- Duplicate scheduled times generate conflict warnings through `Scheduler.detect_conflicts()`.
+
+These tests were important because they verify the core algorithmic behavior that makes the app more than just a form-based prototype.
 
 **b. Confidence**
 
-- How confident are you that your scheduler works correctly?
-- What edge cases would you test next if you had more time?
+I am fairly confident in the current scheduler behavior for the features implemented. The system works well for the happy path and for the exact-time conflict cases we set out to support.
+
+If I had more time, I would add tests for overlapping durations, unscheduled overflow tasks, and repeated weekly task behavior.
 
 ---
 
@@ -133,13 +148,12 @@ The original design had no mechanism for the case where total task time exceeds 
 
 **a. What went well**
 
-- What part of this project are you most satisfied with?
+I am most satisfied with connecting the backend logic to the Streamlit UI and making state persist through `st.session_state`. That bridge turned the app into a usable tool instead of a static mockup.
 
 **b. What you would improve**
 
-- If you had another iteration, what would you improve or redesign?
+If I had another iteration, I would improve the scheduler by tracking task durations explicitly in the timeline, adding a conflict model for overlapping intervals, and giving the user a way to edit or delete tasks after creation.
 
 **c. Key takeaway**
 
-- What is one important thing you learned about designing systems or working with AI on this project?
-- Persisting objects in `st.session_state` is essential for keeping app state while users interact with forms and buttons. Without it, every Streamlit refresh would recreate the owner and lose the pet/task data, so this bridge between UI and backend is critical.
+The key takeaway is that the human role is the architecture: AI helped suggest syntax and design patterns, but I had to choose the right tradeoffs and keep the final structure coherent. Using separate chat sessions for design, implementation, and testing kept the work organized and made it easier to validate each phase.

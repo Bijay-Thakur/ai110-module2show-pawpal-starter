@@ -51,6 +51,8 @@ available_hours_input = st.text_input(
 )
 owner.available_hours = [hour.strip() for hour in available_hours_input.split(",") if hour.strip()]
 
+scheduler = Scheduler(owner)
+
 st.divider()
 
 st.subheader("Owner summary")
@@ -74,11 +76,8 @@ if add_pet_button:
     new_pet = Pet(name=pet_name, species=species, age=int(age))
     owner.add_pet(new_pet)
     st.success(f"Added {new_pet.name} to {owner.name}'s pets.")
-    st.experimental_rerun()
+    st.rerun()
 
-st.divider()
-
-st.subheader("Add a task")
 if owner.get_pets():
     pet_names = [pet.name for pet in owner.get_pets()]
     with st.form("add_task_form"):
@@ -103,26 +102,40 @@ if owner.get_pets():
         )
         selected_pet.add_task(new_task)
         st.success(f"Added task '{new_task.title}' for {selected_pet.name}.")
-        st.experimental_rerun()
+        st.rerun()
 
-    if owner.get_all_tasks():
-        st.markdown("### Current tasks")
-        task_rows = []
-        for pet in owner.get_pets():
-            for task in pet.get_tasks():
-                task_rows.append(
-                    {
-                        "pet": pet.name,
-                        "title": task.title,
-                        "priority": task.priority,
-                        "duration": task.duration_minutes,
-                        "frequency": task.frequency,
-                        "preferred_time": task.preferred_time or "Anytime",
-                    }
-                )
-        st.table(task_rows)
+    st.divider()
+    st.subheader("Current tasks")
+
+    task_filter_pet = st.selectbox("Filter tasks by pet", ["All pets"] + pet_names)
+    include_completed = st.checkbox("Include completed tasks", value=False)
+
+    filtered_tasks = scheduler.filter_tasks(
+        pet_name=None if task_filter_pet == "All pets" else task_filter_pet,
+        include_completed=include_completed,
+    )
+    sorted_tasks = scheduler.sort_by_time(filtered_tasks)
+
+    if sorted_tasks:
+        st.table(
+            [
+                {
+                    "pet": next(
+                        p.name
+                        for p in owner.get_pets()
+                        if sorted_tasks[i] in p.get_tasks(include_completed=True)
+                    ),
+                    "title": task.title,
+                    "priority": task.priority,
+                    "due time": task.preferred_time or "Anytime",
+                    "frequency": task.frequency,
+                    "completed": task.is_completed,
+                }
+                for i, task in enumerate(sorted_tasks)
+            ]
+        )
     else:
-        st.info("No tasks yet. Add one to a pet above.")
+        st.info("No tasks match the current filters.")
 else:
     st.info("Add a pet first to start assigning tasks.")
 
@@ -137,12 +150,15 @@ if st.button("Generate schedule"):
     elif not owner.available_hours:
         st.warning("Set available hours before generating a schedule.")
     else:
-        scheduler = Scheduler(owner)
         for pet in owner.get_pets():
             for task in pet.get_tasks():
                 scheduler.add_task(task, pet)
 
         schedule = scheduler.generate_schedule()
+        if scheduler.schedule_warnings:
+            for warning in scheduler.schedule_warnings:
+                st.warning(warning)
+
         st.success("Schedule generated.")
         st.table(
             [
@@ -155,3 +171,6 @@ if st.button("Generate schedule"):
                 for entry in schedule
             ]
         )
+
+        if scheduler.schedule_warnings:
+            st.info("Resolve the above time conflicts by adjusting preferred times or available hours.")
